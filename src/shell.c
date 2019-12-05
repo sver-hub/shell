@@ -122,7 +122,8 @@ int sh_cd(char **args)
 	}
 
 	free(V.pwd);
-	V.pwd = realpath(args[0], NULL);
+	V.pwd = getcwd(NULL, 1);
+	//realpath(args[0], NULL);
 
 	return 0;
 }
@@ -157,7 +158,7 @@ int sh_exit(char **args)
 {
 	if (args[0] != NULL)
 		return -1;
-	
+
 	onexit();
 	exit(0);
 	return 0;
@@ -245,6 +246,9 @@ int read_command(char ***tokens)
 
 			if (c == '\n' || c == '#' || c == ';')
 			{
+				args = (char**)realloc(args, sizeof(char*)*(numargs));
+				if (args == NULL) return MEM_ERROR;
+
 				*tokens = args;
 				return numargs;
 			}
@@ -347,6 +351,11 @@ int read_command(char ***tokens)
 					subst.len = 0;
 					subst.mem = 0;
 				}
+				else
+				{
+					append(&buf, "$", 1);
+					append(&buf, &c, 1);
+				}
 				continue;
 			}
 
@@ -443,10 +452,10 @@ int get_job(job *jb)
 			iarg++;
 		}
 	}
-	args = (char**)realloc(args, sizeof(char*)*(iarg + 1));
+	args = (char**)realloc(args, sizeof(char*)*(iarg));
 	if (args == NULL) return MEM_ERROR;
 
-	args[iarg] = NULL;
+	args[iarg - 1] = NULL;
 	progs[iprog].arguments = args;
 	progs[iprog].number_of_arguments = iarg - 1;
 
@@ -472,6 +481,40 @@ void print_job(job jb)
 		printf("background : %d\n", jb.background);
 }
 
+int execute(job jb)
+{
+	int i;
+	pid_t pid, wpid;
+	int status;
+
+	for (i = 0; i < 7; i++)
+	{
+		if (!strcmp(jb.programs[0].name, sh_names[i]))
+		{
+			return (*sh_funcs[i])(jb.programs[0].arguments);
+		}
+	}
+
+	pid = fork();
+	if (pid == 0)
+	{
+		execvp(jb.programs[0].name, jb.programs[0].arguments);
+		printf("failed\n");
+	}
+	else if (pid < 0)
+	{
+		printf("fork fail\n");
+	}
+	else
+	{
+		do
+		{
+			wpid = waitpid(pid, &status, WUNTRACED);
+		} while (!WIFEXITED(status) && !WIFSIGNALED(status));
+	}
+
+	return 0;
+}
 
 /* MAIN */
 int init(int argc, char **argv)
@@ -518,10 +561,15 @@ int main(int argc, char** argv)
 	job jb;
 
 	init(argc, argv);
-	printf("%d\n", V.numargs);
-	get_job(&jb);
+	
+	while (1)
+	{
+		get_job(&jb);
 
-	print_job(jb);
+		//print_job(jb);
+
+		execute(jb);
+	}
 
 	onexit();
 	
