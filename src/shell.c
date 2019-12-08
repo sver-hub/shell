@@ -12,7 +12,10 @@
 #define BUFFADD 20
 #define MEM_ERROR -1
 #define NEWBUF {NULL, 0, 0}
+#define NEWQUEUE {0, -1, 0}
+#define MAX 10
 
+//BUFFER
 typedef struct buffer
 {
 	char *chars;
@@ -44,6 +47,48 @@ int append(buffer *buf, char* s, int l)
 	return i;
 }
 
+//QUEUE
+typedef struct QUEUE
+{
+	int front;
+	int rear;
+	int num;
+	int array[MAX];
+} queue;
+
+void add(queue *q, int a)
+{
+	if (q->num < MAX)
+	{
+		if (q->rear == MAX - 1)
+			q->rear = -1;
+
+		q->rear++;
+		q->array[q->rear] = a;
+		q->num++;
+	}
+}
+
+int take(queue *q)
+{
+	if (q->num == 0) return -1;
+
+	int a = q->array[q->front];
+	q->front++;
+
+	if (q->front == MAX)
+		q->front = 0;
+
+	q->num--;
+	return a;
+}
+
+typedef struct history
+{
+	int top;
+	int num;
+	char *commands[MAX];
+} history;
 
 typedef struct program
 {
@@ -73,9 +118,31 @@ struct vars
 	pid_t pid;
 	char *username;
 	int eof;
+	history history;
 };
 
 struct vars V;
+
+//HISTORY
+void addhistory(char* s)
+{
+	if (V.history.top == MAX - 1)
+	{
+		V.history.top = -1;
+	}
+	V.history.commands[++V.history.top] = s;
+	V.history.num++;
+}
+
+void freehistory()
+{
+	int i;
+	int t = V.history.num < MAX ? V.history.num : MAX;
+	for (i = 0; i < t; i++)
+	{
+		free(V.history.commands[i]);
+	}
+}
 
 void err_com()
 {
@@ -169,7 +236,21 @@ int sh_exit(char **args)
 
 int sh_history(char **args)
 {
-	printf("%s\n", args[0]);
+	if (args[1] != NULL)
+		return -1;
+
+	int i, j, t, n;
+	j = V.history.num > MAX ? (V.history.top + 1) % MAX : 0;
+	t = V.history.num < MAX ? V.history.num : MAX;
+	n = V.history.num - MAX;
+	if (n < 0) n = 0;
+	for (i = 0; i < t; i++)
+	{
+		if (j == MAX) j = 0;
+		printf("%d %s\n", 1 + n + i, V.history.commands[j]);
+		j++;
+	}
+
 	return 0;
 }
 
@@ -210,6 +291,26 @@ char* itoa(int n)
 	return res;
 }
 
+buffer hist = NEWBUF;
+
+char rd()
+{
+	char c = fgetc(stdin);
+	if (c != '\n')
+		append(&hist, &c, 1);
+	else 
+	{
+		hist.chars = (char*)realloc(hist.chars, hist.len + 1);
+		hist.chars[hist.len] = '\0';
+		addhistory(hist.chars);
+		hist.chars = NULL;
+		hist.len = 0;
+		hist.mem = 0;
+	}
+
+	return c;
+}
+
 int read_command(char ***tokens)
 {
 	char **args = NULL;
@@ -224,7 +325,7 @@ int read_command(char ***tokens)
 
 	while (1)
 	{
-		c = fgetc(stdin);
+		c = rd();
 
 		if ((!quotes1 && !quotes2 && (c == ' ' || c == '#' || c == ';')) || c == '\n' || c == EOF)
 		{
@@ -253,6 +354,13 @@ int read_command(char ***tokens)
 				if (args == NULL) return MEM_ERROR;
 
 				*tokens = args;
+
+				if (c == '#')
+				{
+					while (c != '\n' && c != EOF)
+						c = rd();
+				}
+
 				if (c == EOF) V.eof = 1;
 
 				return numargs;
@@ -266,9 +374,10 @@ int read_command(char ***tokens)
 		{
 			if (c == '\'')
 			{
-				if (quotes1 && quotes1 > quotes2)
+				if (quotes1 && quotes2 && quotes1 > quotes2)
 				{
 					free(buf.chars);
+					printf("invalid input\n");
 					return -1;
 				}
 				quotes1 = quotes1 ? 0 : 1;
@@ -277,9 +386,10 @@ int read_command(char ***tokens)
 			}
 			else if (c == '\"')
 			{
-				if (quotes2 && quotes2 > quotes1)
+				if (quotes2 && quotes1 && quotes2 > quotes1)
 				{
 					free(buf.chars);
+					printf("invalid input\n");
 					return -1;
 				}
 				quotes2 = quotes2 ? 0 : 1;
@@ -289,7 +399,7 @@ int read_command(char ***tokens)
 
 			if (c == '\\')
 			{
-				c = fgetc(stdin);
+				c = rd();
 				if (c == 'n') c = '\n';
 				else if (c == 'r') c = '\r';
 				else if (c == '\\') c = '\\';
@@ -301,7 +411,7 @@ int read_command(char ***tokens)
 
 			if (c == '$' && (!quotes1 || (quotes2 && quotes2 < quotes1)))
 			{
-				c = fgetc(stdin);
+				c = rd();
 
 				if (c > '0' && c <= '9')
 				{
@@ -318,7 +428,7 @@ int read_command(char ***tokens)
 				}
 				else if (c == '{')
 				{
-					while ((c = fgetc(stdin)) != '}')
+					while ((c = rd()) != '}')
 						append(&subst, &c, 1);
 					append(&subst, "\0", 1);
 
@@ -372,6 +482,7 @@ int read_command(char ***tokens)
 	}
 }
 
+//TODO exit status
 int get_job(job *jb)
 {
 	int j;
@@ -437,8 +548,13 @@ int get_job(job *jb)
 			progs[iprog].output_file = tokens[j];
 			progs[iprog].output_type = !strcmp(tokens[j - 1], ">") ? 1 : 2;
 		}
-		else if (j == numtokens - 1 && !strcmp(tokens[j], "&"))
-			jb->background = 1;
+		else if (!strcmp(tokens[j], "&"))
+		{
+			if (j == numtokens - 1)
+				jb->background = 1;
+			else
+				return -1;
+		}
 		else
 		{
 			if (iarg == 0)
@@ -514,50 +630,46 @@ int execute(job jb)
 		if (pid == -1) return -1;
 		if (pid == 0) 
 		{
-			if (iprog == 0)
-			{
-				//first input
-				if (jb.programs[iprog].input_file != NULL)
-				{
-					if (access(jb.programs[iprog].input_file, F_OK) == -1)
-					{
-						printf("input_file does not exist\n");
-						_exit(1);
-					}
-
-					filefd = open(jb.programs[iprog].input_file, O_RDONLY, S_IRUSR | S_IWUSR | S_IXUSR);
-					dup2(filefd, 0);
-					close(filefd);
-				}	
-			}
-			else
+			if (iprog > 0)
 			{
 				//input from previous program
 				dup2(prevrd, 0);
 				close(prevrd);
 			}
-			
 
-			if (iprog == jb.number_of_programs - 1)
-			{
-				//final output
-				if (jb.programs[iprog].output_file != NULL)
-				{
-					if (jb.programs[iprog].output_type == 1)
-						filefd = open(jb.programs[iprog].output_file, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR);
-					else
-						filefd = open(jb.programs[iprog].output_file, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR);
-					dup2(filefd, 1);
-					close(filefd);
-				}
-			}
-			else
+			if (iprog < jb.number_of_programs - 1)
 			{
 				//output to next program
 				dup2(p[1], 1);
 				close(p[0]);
 				close(p[1]);
 			}
+			
+			//file input
+			if (jb.programs[iprog].input_file != NULL)
+			{
+				if (access(jb.programs[iprog].input_file, F_OK) == -1)
+				{
+					printf("input_file does not exist\n");
+					_exit(1);
+				}
+
+				filefd = open(jb.programs[iprog].input_file, O_RDONLY, S_IRUSR | S_IWUSR | S_IXUSR);
+				dup2(filefd, 0);
+				close(filefd);
+			}	
+
+			//file output
+			if (jb.programs[iprog].output_file != NULL)
+			{
+				if (jb.programs[iprog].output_type == 1)
+					filefd = open(jb.programs[iprog].output_file, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR);
+				else
+					filefd = open(jb.programs[iprog].output_file, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR);
+				dup2(filefd, 1);
+				close(filefd);
+			}
+			
 
 			execvp(jb.programs[iprog].name, jb.programs[iprog].arguments);
 			printf("failed\n");
@@ -626,6 +738,9 @@ int init(int argc, char **argv)
 		V.args = NULL;
 	}
 
+	V.history.top = -1;
+	V.history.num = 0;
+
 	return 0;
 }
 
@@ -633,6 +748,7 @@ int onexit()
 {
 	free(V.pwd);
 	free(V.shell);
+	freehistory();
 	
 	return 0;
 }
