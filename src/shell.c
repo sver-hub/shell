@@ -6,7 +6,8 @@
 #include <sys/types.h>
 #include <termios.h>
 #include <sys/ioctl.h>
-#include <math.h>
+#include <pwd.h>
+#include <fcntl.h>
 
 #define BUFFADD 20
 #define MEM_ERROR -1
@@ -67,9 +68,11 @@ struct vars
 	char *shell;
 	int numargs;
 	char **args;
-	int uid;
+	uid_t uid;
 	char *pwd;
-	int pid;	
+	pid_t pid;
+	char *username;
+	int eof;
 };
 
 struct vars V;
@@ -112,10 +115,10 @@ int (*sh_funcs[]) (char **) = {
 
 int sh_cd(char **args)
 {
-	if (args[0] == NULL || args[1] != NULL)
+	if (args[1] == NULL || args[2] != NULL)
 		return -1;
 
-	if (chdir(args[0])!= 0) 
+	if (chdir(args[1])!= 0) 
 	{
 		printf("no such directory\n");
 		return -1;
@@ -130,7 +133,7 @@ int sh_cd(char **args)
 
 int sh_pwd(char **args)
 {
-	if (args[0] != NULL)
+	if (args[1] != NULL)
 		return -1;
 	printf("%s\n", V.pwd);
 	return 0;
@@ -156,7 +159,7 @@ int sh_bg(char **args)
 
 int sh_exit(char **args)
 {
-	if (args[0] != NULL)
+	if (args[1] != NULL)
 		return -1;
 
 	onexit();
@@ -223,7 +226,7 @@ int read_command(char ***tokens)
 	{
 		c = fgetc(stdin);
 
-		if ((!quotes1 && !quotes2 && (c == ' ' || c == '#' || c == ';')) || c == '\n')
+		if ((!quotes1 && !quotes2 && (c == ' ' || c == '#' || c == ';')) || c == '\n' || c == EOF)
 		{
 			if (c == ' ' && buf.len == 0)
 				continue;
@@ -244,12 +247,14 @@ int read_command(char ***tokens)
 				args[numargs - 1] = buf.chars;
 			}
 
-			if (c == '\n' || c == '#' || c == ';')
+			if (c == '\n' || c == '#' || c == ';' || c == EOF)
 			{
 				args = (char**)realloc(args, sizeof(char*)*(numargs));
 				if (args == NULL) return MEM_ERROR;
 
 				*tokens = args;
+				if (c == EOF) V.eof = 1;
+
 				return numargs;
 			}
 
@@ -395,12 +400,12 @@ int get_job(job *jb)
 	{
 		if (!strcmp(tokens[j], "|"))
 		{
-			args = (char**)realloc(args, sizeof(char*)*(iarg+1));
+			args = (char**)realloc(args, sizeof(char*)*(iarg + 1));
 			if (args == NULL) return MEM_ERROR;
 
 			args[iarg] = NULL;
 			progs[iprog].arguments = args;
-			progs[iprog].number_of_arguments = iarg - 1;
+			progs[iprog].number_of_arguments = iarg;
 
 			iprog++;
 			progs = (program*)realloc(progs, sizeof(program)*(iprog + 1));
@@ -438,26 +443,25 @@ int get_job(job *jb)
 		{
 			if (iarg == 0)
 				progs[iprog].name = tokens[j];
-			else
+			
+			if (memarg < iarg + 1)
 			{
-				if (memarg < iarg)
-				{
-					memarg += BUFFADD;
-					args = (char**)realloc(args, sizeof(char*)*memarg);
-					if (args == NULL) return MEM_ERROR;
-				}
-				args[iarg - 1] = tokens[j];
+				memarg += BUFFADD;
+				args = (char**)realloc(args, sizeof(char*)*memarg);
+				if (args == NULL) return MEM_ERROR;
 			}
+			args[iarg] = tokens[j];
+			
 
 			iarg++;
 		}
 	}
-	args = (char**)realloc(args, sizeof(char*)*(iarg));
+	args = (char**)realloc(args, sizeof(char*)*(iarg + 1));
 	if (args == NULL) return MEM_ERROR;
 
-	args[iarg - 1] = NULL;
+	args[iarg] = NULL;
 	progs[iprog].arguments = args;
-	progs[iprog].number_of_arguments = iarg - 1;
+	progs[iprog].number_of_arguments = iarg;
 
 	jb->programs = progs;
 	jb->number_of_programs = iprog + 1;
@@ -484,8 +488,13 @@ void print_job(job jb)
 int execute(job jb)
 {
 	int i;
-	pid_t pid, wpid;
+	int iprog;
+	pid_t wpid;
 	int status;
+	pid_t pid;
+	int p[2];
+	int prevrd;
+	int filefd;
 
 	for (i = 0; i < 7; i++)
 	{
@@ -495,37 +504,110 @@ int execute(job jb)
 		}
 	}
 
-	pid = fork();
-	if (pid == 0)
+	for (iprog = 0; iprog < jb.number_of_programs; iprog++)
 	{
-		execvp(jb.programs[0].name, jb.programs[0].arguments);
-		printf("failed\n");
-	}
-	else if (pid < 0)
-	{
-		printf("fork fail\n");
-	}
-	else
-	{
-		do
+		if (jb.number_of_programs > 0 && iprog < jb.number_of_programs - 1)
+			if (pipe(p) == -1) return -1;
+
+		pid = fork();
+
+		if (pid == -1) return -1;
+		if (pid == 0) 
 		{
-			wpid = waitpid(pid, &status, WUNTRACED);
-		} while (!WIFEXITED(status) && !WIFSIGNALED(status));
+			if (iprog == 0)
+			{
+				//first input
+				if (jb.programs[iprog].input_file != NULL)
+				{
+					if (access(jb.programs[iprog].input_file, F_OK) == -1)
+					{
+						printf("input_file does not exist\n");
+						_exit(1);
+					}
+
+					filefd = open(jb.programs[iprog].input_file, O_RDONLY, S_IRUSR | S_IWUSR | S_IXUSR);
+					dup2(filefd, 0);
+					close(filefd);
+				}	
+			}
+			else
+			{
+				//input from previous program
+				dup2(prevrd, 0);
+				close(prevrd);
+			}
+			
+
+			if (iprog == jb.number_of_programs - 1)
+			{
+				//final output
+				if (jb.programs[iprog].output_file != NULL)
+				{
+					if (jb.programs[iprog].output_type == 1)
+						filefd = open(jb.programs[iprog].output_file, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR);
+					else
+						filefd = open(jb.programs[iprog].output_file, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IXUSR);
+					dup2(filefd, 1);
+					close(filefd);
+				}
+			}
+			else
+			{
+				//output to next program
+				dup2(p[1], 1);
+				close(p[0]);
+				close(p[1]);
+			}
+
+			execvp(jb.programs[iprog].name, jb.programs[iprog].arguments);
+			printf("failed\n");
+		}
+
+		if (iprog < jb.number_of_programs - 1) close(p[1]);
+		if (iprog > 0) close(prevrd);
+
+		prevrd = p[0];
 	}
 
+	do
+	{
+		wpid = waitpid(pid, &status, WUNTRACED);
+	} while (!WIFEXITED(status) && !WIFSIGNALED(status));
+
 	return 0;
+}
+
+void freejob(job *jb)
+{
+	int i, j;
+
+	for (i = 0; i < jb->number_of_programs; i++)
+	{
+		free(jb->programs[i].name);
+		for (j = 1; j < jb->programs[i].number_of_arguments; j++)
+		{
+			free(jb->programs[i].arguments[j]);
+		}
+		free(jb->programs[i].arguments);
+		if (jb->programs[i].input_file != NULL) free(jb->programs[i].input_file);
+		if (jb->programs[i].output_file != NULL) free(jb->programs[i].output_file);
+	}
 }
 
 /* MAIN */
 int init(int argc, char **argv)
 {
 	int i;
+	struct passwd *pwd;
 
 	V.user = getenv("USER");
 	V.home = getenv("HOME");
 	V.pwd = getcwd(NULL, 1);
 	V.pid = getpid();
 	V.uid = getuid();
+
+	pwd = getpwuid(V.uid);
+	V.username = pwd->pw_name;
 
 	V.shell = realpath(argv[0], NULL);
 
@@ -562,13 +644,16 @@ int main(int argc, char** argv)
 
 	init(argc, argv);
 	
-	while (1)
+	while (!V.eof)
 	{
+		printf("%s$ ", V.username);
 		get_job(&jb);
 
 		//print_job(jb);
 
-		execute(jb);
+		if (execute(jb) == -1) printf("oopsie\n");
+
+		freejob(&jb);
 	}
 
 	onexit();
