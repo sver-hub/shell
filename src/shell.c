@@ -8,12 +8,15 @@
 #include <sys/ioctl.h>
 #include <pwd.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #define BUFFADD 20
 #define MEM_ERROR -1
 #define NEWBUF {NULL, 0, 0}
-#define NEWQUEUE {0, -1, 0}
+#define NEWJOB {0, NULL, 0}
 #define MAX 10
+
+
 
 //BUFFER
 typedef struct buffer
@@ -47,48 +50,25 @@ int append(buffer *buf, char* s, int l)
 	return i;
 }
 
-//QUEUE
-typedef struct QUEUE
+int endbuf(buffer *buf)
 {
-	int front;
-	int rear;
-	int num;
-	int array[MAX];
-} queue;
+	char *tmp = NULL;
 
-void add(queue *q, int a)
-{
-	if (q->num < MAX)
-	{
-		if (q->rear == MAX - 1)
-			q->rear = -1;
+	tmp = (char*)realloc(buf->chars, (buf->len + 1)*sizeof(char));
+	if (tmp == NULL) return MEM_ERROR;
 
-		q->rear++;
-		q->array[q->rear] = a;
-		q->num++;
-	}
+	tmp[buf->len] = '\0';
+	buf->chars = tmp;
+	buf->mem = buf->len + 1;
+	return 0;
 }
 
-int take(queue *q)
+void resetbuf(buffer *buf)
 {
-	if (q->num == 0) return -1;
-
-	int a = q->array[q->front];
-	q->front++;
-
-	if (q->front == MAX)
-		q->front = 0;
-
-	q->num--;
-	return a;
+	buf->chars = NULL;
+	buf->len = 0;
+	buf->mem = 0;
 }
-
-typedef struct history
-{
-	int top;
-	int num;
-	char *commands[MAX];
-} history;
 
 typedef struct program
 {
@@ -106,6 +86,65 @@ typedef struct job
 	int number_of_programs;
 } job;
 
+void freejob(job *jb);
+
+//QUEUE
+typedef struct QUEUE
+{
+	int front;
+	int rear;
+	int num;
+	job array[MAX];
+} queue;
+
+void addq(queue *q, job a)
+{
+	if (q->num < MAX)
+	{
+		if (q->rear == MAX - 1)
+			q->rear = -1;
+
+		q->rear++;
+		q->array[q->rear] = a;
+		q->num++;
+	}
+	else
+		printf("job can not be run : jobs queue if full\n");
+}
+
+job takeq(queue *q)
+{
+	job a = q->array[q->front];
+	q->front++;
+
+	if (q->front == MAX)
+		q->front = 0;
+
+	q->num--;
+	return a;
+}
+
+void resetq(queue *q)
+{
+	int i;
+	for (i = 0; i < MAX; i++)
+		freejob(&q->array[i]);
+	q->front = 0;
+	q->rear = -1;
+	q->num = 0;
+}
+
+queue jobq;
+
+
+typedef struct history
+{
+	int top;
+	int num;
+	char *commands[MAX];
+} history;
+
+
 struct vars
 {
 	char *user;
@@ -119,6 +158,7 @@ struct vars
 	char *username;
 	int eof;
 	history history;
+	pid_t curpid;
 };
 
 struct vars V;
@@ -158,6 +198,7 @@ int sh_fg(char **args);
 int sh_bg(char **args);
 int sh_exit(char **args);
 int sh_history(char **args);
+
 int onexit();
 
 char *sh_names[] = {
@@ -293,25 +334,62 @@ char* itoa(int n)
 
 buffer hist = NEWBUF;
 
-char rd()
+int readline()
 {
 	char c = fgetc(stdin);
-	if (c != '\n')
-		append(&hist, &c, 1);
-	else 
-	{
-		hist.chars = (char*)realloc(hist.chars, hist.len + 1);
-		hist.chars[hist.len] = '\0';
-		addhistory(hist.chars);
-		hist.chars = NULL;
-		hist.len = 0;
-		hist.mem = 0;
-	}
 
-	return c;
+	while (c != '\n')
+	{
+		append(&hist, &c, 1);
+		c = fgetc(stdin);
+	}
+	
+	endbuf(&hist);
+
+	addhistory(hist.chars);
+
+	resetbuf(&hist);
+	
+	return 0;
 }
 
-int read_command(char ***tokens)
+int splitcom(char ***result)
+{
+	int num = 0;
+	char** coms = NULL;
+	int i = 0;
+	char *line = V.history.commands[V.history.top];
+
+	buffer buf = NEWBUF;
+
+	while (line[i] != '\0')
+	{
+		if (line[i] == ';')
+		{
+			coms = (char**)realloc(coms, sizeof(char*)*(num + 1));
+			if (coms == NULL) return MEM_ERROR;
+
+			endbuf(&buf);
+			coms[num++] = buf.chars;
+
+			resetbuf(&buf);
+		}
+		else
+			append(&buf, &line[i], 1);
+
+		i++;
+	}
+	coms = (char**)realloc(coms, sizeof(char*)*(num + 1));
+	if (coms == NULL) return MEM_ERROR;
+
+	endbuf(&buf);
+	coms[num++] = buf.chars;
+
+	*result = coms;
+	return num;
+}
+
+int parsecom(char *line, char ***tokens)
 {
 	char **args = NULL;
 	int numargs = 0;
@@ -320,23 +398,22 @@ int read_command(char ***tokens)
 	buffer buf = NEWBUF;
 	buffer subst = NEWBUF;
 	char c;
+	int i = 0;
 	int quotes1 = 0;
 	int quotes2 = 0;
 
 	while (1)
 	{
-		c = rd();
+		c = line[i++];
 
-		if ((!quotes1 && !quotes2 && (c == ' ' || c == '#' || c == ';')) || c == '\n' || c == EOF)
+		if ((!quotes1 && !quotes2 && (c == ' ' || c == '#')) || c == '\0' || c == EOF)
 		{
 			if (c == ' ' && buf.len == 0)
 				continue;
 
 			if (buf.len > 0)
 			{
-				buf.chars = (char*)realloc(buf.chars, buf.len + 1);
-				if (buf.chars == NULL) return MEM_ERROR;
-				append(&buf, "\0", 1);
+				endbuf(&buf);
 
 				if (++numargs > memargs)
 				{
@@ -346,9 +423,11 @@ int read_command(char ***tokens)
 				}
 
 				args[numargs - 1] = buf.chars;
+
+				resetbuf(&buf);
 			}
 
-			if (c == '\n' || c == '#' || c == ';' || c == EOF)
+			if (c == '\0' || c == '#' || c == EOF)
 			{
 				args = (char**)realloc(args, sizeof(char*)*(numargs));
 				if (args == NULL) return MEM_ERROR;
@@ -357,18 +436,14 @@ int read_command(char ***tokens)
 
 				if (c == '#')
 				{
-					while (c != '\n' && c != EOF)
-						c = rd();
+					while (c != '\0' && c != EOF)
+						c = line[i++];
 				}
 
 				if (c == EOF) V.eof = 1;
 
 				return numargs;
 			}
-
-			buf.chars = NULL;
-			buf.len = 0;
-			buf.mem = 0;
 		}
 		else
 		{
@@ -399,7 +474,7 @@ int read_command(char ***tokens)
 
 			if (c == '\\')
 			{
-				c = rd();
+				c = line[i++];
 				if (c == 'n') c = '\n';
 				else if (c == 'r') c = '\r';
 				else if (c == '\\') c = '\\';
@@ -411,7 +486,7 @@ int read_command(char ***tokens)
 
 			if (c == '$' && (!quotes1 || (quotes2 && quotes2 < quotes1)))
 			{
-				c = rd();
+				c = line[i++];
 
 				if (c > '0' && c <= '9')
 				{
@@ -428,7 +503,7 @@ int read_command(char ***tokens)
 				}
 				else if (c == '{')
 				{
-					while ((c = rd()) != '}')
+					while ((c = line[i++] != '}'))
 						append(&subst, &c, 1);
 					append(&subst, "\0", 1);
 
@@ -462,9 +537,7 @@ int read_command(char ***tokens)
 					}
 
 					free(subst.chars);
-					subst.chars = NULL;
-					subst.len = 0;
-					subst.mem = 0;
+					resetbuf(&subst);
 				}
 				else
 				{
@@ -482,13 +555,11 @@ int read_command(char ***tokens)
 	}
 }
 
-//TODO exit status
-int get_job(job *jb)
+//maybe TODO exit status
+int parse_job(char **tokens, int numtokens)
 {
 	int j;
-
-	char** tokens = NULL;
-	int numtokens;
+	job jb;
 
 	program *progs = NULL;
 	int iprog = 0;
@@ -497,15 +568,12 @@ int get_job(job *jb)
 	int iarg = 0;
 	int memarg = 0;
 
-	jb->background = 0;
 
 	progs = malloc(sizeof(program));
 	if (progs == NULL) return MEM_ERROR;
 	progs[0].input_file = NULL;
 	progs[0].output_file = NULL;
 	progs[0].output_type = 0;
-
-	numtokens = read_command(&tokens);
 	
 	for (j = 0; j < numtokens; j++)
 	{
@@ -521,6 +589,7 @@ int get_job(job *jb)
 			iprog++;
 			progs = (program*)realloc(progs, sizeof(program)*(iprog + 1));
 			if (progs == NULL) return MEM_ERROR;
+
 			progs[iprog].input_file = NULL;
 			progs[iprog].output_file = NULL;
 			progs[iprog].output_type = 0;
@@ -551,7 +620,7 @@ int get_job(job *jb)
 		else if (!strcmp(tokens[j], "&"))
 		{
 			if (j == numtokens - 1)
-				jb->background = 1;
+				jb.background = 1;
 			else
 				return -1;
 		}
@@ -566,12 +635,12 @@ int get_job(job *jb)
 				args = (char**)realloc(args, sizeof(char*)*memarg);
 				if (args == NULL) return MEM_ERROR;
 			}
-			args[iarg] = tokens[j];
-			
 
+			args[iarg] = tokens[j];
 			iarg++;
 		}
 	}
+
 	args = (char**)realloc(args, sizeof(char*)*(iarg + 1));
 	if (args == NULL) return MEM_ERROR;
 
@@ -579,9 +648,30 @@ int get_job(job *jb)
 	progs[iprog].arguments = args;
 	progs[iprog].number_of_arguments = iarg;
 
-	jb->programs = progs;
-	jb->number_of_programs = iprog + 1;
+	jb.programs = progs;
+	jb.number_of_programs = iprog + 1;
 
+	addq(&jobq, jb);
+
+	return 0;
+}
+
+int get_jobs()
+{
+	char **splitted = NULL;
+	int sp;
+	char **tokens = NULL;
+	int tk;
+	int i;
+
+	sp = splitcom(&splitted);
+
+	for (i = 0; i < sp; i++)
+	{
+		tk = parsecom(splitted[i], &tokens);
+		parse_job(tokens, tk);
+		free(splitted[i]);
+	}
 
 	return 0;
 }
@@ -670,9 +760,9 @@ int execute(job jb)
 				close(filefd);
 			}
 			
-
 			execvp(jb.programs[iprog].name, jb.programs[iprog].arguments);
 			printf("failed\n");
+			_exit(1);
 		}
 
 		if (iprog < jb.number_of_programs - 1) close(p[1]);
@@ -681,10 +771,14 @@ int execute(job jb)
 		prevrd = p[0];
 	}
 
+	V.curpid = pid;
+
 	do
 	{
 		wpid = waitpid(pid, &status, WUNTRACED);
-	} while (!WIFEXITED(status) && !WIFSIGNALED(status));
+	} while (!WIFEXITED(status) && !WIFSIGNALED(status) && !WIFSTOPPED(status));
+
+	V.curpid = V.pid;
 
 	return 0;
 }
@@ -717,6 +811,7 @@ int init(int argc, char **argv)
 	V.pwd = getcwd(NULL, 1);
 	V.pid = getpid();
 	V.uid = getuid();
+	V.curpid = V.pid;
 
 	pwd = getpwuid(V.uid);
 	V.username = pwd->pw_name;
@@ -741,6 +836,8 @@ int init(int argc, char **argv)
 	V.history.top = -1;
 	V.history.num = 0;
 
+	resetq(&jobq);
+
 	return 0;
 }
 
@@ -753,23 +850,56 @@ int onexit()
 	return 0;
 }
 
+void inthndlr(int sig)
+{
+	sig += 0;
+	printf("\n");
+	if (V.curpid != V.pid)
+		kill(V.curpid, SIGTERM);
+	else
+	{
+		onexit();
+		exit(0);
+	}
+}
+
+void stophndlr(int sig)
+{
+	sig += 0;
+	printf("\n");
+	if (V.curpid != V.pid)
+	{
+		kill(V.curpid, SIGTSTP);
+	}
+}
+
 int main(int argc, char** argv)
 {
 	
 	job jb;
 
 	init(argc, argv);
+
+	signal(SIGINT, inthndlr);
+	signal(SIGTSTP, stophndlr);
 	
 	while (!V.eof)
 	{
 		printf("%s$ ", V.username);
-		get_job(&jb);
 
-		//print_job(jb);
+		readline();
 
-		if (execute(jb) == -1) printf("oopsie\n");
+		get_jobs();
 
-		freejob(&jb);
+
+		while (jobq.rear >= jobq.front)
+		{
+			
+			jb = takeq(&jobq);
+			execute(jb);
+			freejob(&jb);
+			
+		}
 	}
 
 	onexit();
