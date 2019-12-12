@@ -127,7 +127,7 @@ job takeq(queue *q)
 void resetq(queue *q)
 {
 	int i;
-	for (i = 0; i < MAX; i++)
+	for (i = 0; i < q->num; i++)
 		freejob(&q->array[i]);
 	q->front = 0;
 	q->rear = -1;
@@ -170,8 +170,11 @@ void addhistory(char* s)
 	{
 		V.history.top = -1;
 	}
-	V.history.commands[++V.history.top] = s;
+
+	V.history.top++;
 	V.history.num++;
+	if (V.history.num > MAX) free(V.history.commands[V.history.top]);
+	V.history.commands[V.history.top] = s;
 }
 
 void freehistory()
@@ -332,34 +335,69 @@ char* itoa(int n)
 	return res;
 }
 
-buffer hist = NEWBUF;
-
 int readline()
 {
+	buffer buf = NEWBUF;
+
+	buffer subst = NEWBUF;
+	int cmnum;
+
 	char c = fgetc(stdin);
 
 	while (c != '\n')
 	{
-		append(&hist, &c, 1);
-		c = fgetc(stdin);
+		if (c == '!' && (buf.len == 0 || buf.chars[buf.len - 1] == ' '))
+		{
+			c = fgetc(stdin);
+			while (c != '\n' && c != ' ' && c != ';')
+			{
+				append(&subst, &c, 1);
+				c = fgetc(stdin);
+			}
+
+			endbuf(&subst);
+			cmnum = atoi(subst.chars);
+
+			if (cmnum == 0)
+			{
+				append(&buf, subst.chars, subst.len);
+			}
+			else if (cmnum > V.history.num || cmnum <= V.history.num - MAX)
+			{
+				printf("can not substitute command : command is out of reach\n");
+				return -1;
+			}
+			else
+			{
+				append(&buf, V.history.commands[cmnum % MAX - 1], 169);
+			}
+
+			free(subst.chars);
+			resetbuf(&subst);
+		}
+		else
+		{
+			append(&buf, &c, 1);
+			c = fgetc(stdin);
+		}
+		
 	}
 	
-	endbuf(&hist);
+	endbuf(&buf);
 
-	addhistory(hist.chars);
-
-	resetbuf(&hist);
+	addhistory(buf.chars);
 	
 	return 0;
 }
 
-int splitcom(char ***result)
+//todo error handling
+int splitcom(char ***result, int id)
 {
 	int num = 0;
 	char** coms = NULL;
 	int i = 0;
-	char *line = V.history.commands[V.history.top];
-
+	char *line = V.history.commands[id];
+	
 	buffer buf = NEWBUF;
 
 	while (line[i] != '\0')
@@ -445,108 +483,103 @@ int parsecom(char *line, char ***tokens)
 				return numargs;
 			}
 		}
+		else if (c == '\'')
+		{
+			if (quotes1 && quotes2 && quotes1 > quotes2)
+			{
+				free(buf.chars);
+				printf("invalid input\n");
+				return -1;
+			}
+			quotes1 = quotes1 ? 0 : 1;
+			if (quotes2) quotes2++;
+		}
+		else if (c == '\"')
+		{
+			if (quotes2 && quotes1 && quotes2 > quotes1)
+			{
+				free(buf.chars);
+				printf("invalid input\n");
+				return -1;
+			}
+			quotes2 = quotes2 ? 0 : 1;
+			if (quotes1) quotes1++;
+		}
+		else if (c == '\\')
+		{
+			c = line[i++];
+			if (c == 'n') c = '\n';
+			else if (c == 'r') c = '\r';
+			else if (c == '\\') c = '\\';
+			else if (c == 't') c = '\t';
+			else if (c == '\'') c = '\'';
+			else if (c == '\"') c = '\"';
+		}
+		else if (c == '$' && (quotes2 && (!quotes1 || (quotes2 < quotes1))))
+		{
+			c = line[i++];
+
+			if (c > '0' && c <= '9')
+			{
+				append(&buf, V.args[c - '0' - 1], 169);
+			}
+			else if (c == '#')
+			{
+				c = V.numargs + '0';
+				append(&buf, &c, 1);
+			}
+			else if (c == '?')
+			{
+
+			}
+			else if (c == '{')
+			{
+				while ((c = line[i++]) != '}')
+				{
+					append(&subst, &c, 1);
+				}
+				append(&subst, "\0", 1);
+
+				if (!strcmp(subst.chars, "HOME"))
+				{
+					append(&buf, V.home, 169);
+				}
+				else if (!strcmp(subst.chars, "USER"))
+				{
+					append(&buf, V.user, 169);
+				}
+				else if (!strcmp(subst.chars, "SHELL"))
+				{
+					append(&buf, V.shell, 169);
+				}
+				else if (!strcmp(subst.chars, "PWD"))
+				{
+					append(&buf, V.pwd, 169);
+				}
+				else if (!strcmp(subst.chars, "UID"))
+				{
+					char *num = itoa(V.uid);
+					append(&buf, num, 169);
+					free(num);
+				}
+				else if (!strcmp(subst.chars, "PID"))
+				{
+					char *num = itoa(V.pid);
+					append(&buf, num, 169);
+					free(num);
+				}
+
+				free(subst.chars);
+				resetbuf(&subst);
+			}
+			else
+			{
+				append(&buf, "$", 1);
+				append(&buf, &c, 1);
+			}
+		}
 		else
 		{
-			if (c == '\'')
-			{
-				if (quotes1 && quotes2 && quotes1 > quotes2)
-				{
-					free(buf.chars);
-					printf("invalid input\n");
-					return -1;
-				}
-				quotes1 = quotes1 ? 0 : 1;
-				if (quotes2) quotes2++;
-				continue;
-			}
-			else if (c == '\"')
-			{
-				if (quotes2 && quotes1 && quotes2 > quotes1)
-				{
-					free(buf.chars);
-					printf("invalid input\n");
-					return -1;
-				}
-				quotes2 = quotes2 ? 0 : 1;
-				if (quotes1) quotes1++;
-				continue;
-			}
-
-			if (c == '\\')
-			{
-				c = line[i++];
-				if (c == 'n') c = '\n';
-				else if (c == 'r') c = '\r';
-				else if (c == '\\') c = '\\';
-				else if (c == 't') c = '\t';
-				else if (c == '\'') c = '\'';
-				else if (c == '\"') c = '\"';
-				else continue;
-			}
-
-			if (c == '$' && (!quotes1 || (quotes2 && quotes2 < quotes1)))
-			{
-				c = line[i++];
-
-				if (c > '0' && c <= '9')
-				{
-					append(&buf, V.args[c - '0' - 1], 169);
-				}
-				else if (c == '#')
-				{
-					c = V.numargs + '0';
-					append(&buf, &c, 1);
-				}
-				else if (c == '?')
-				{
-
-				}
-				else if (c == '{')
-				{
-					while ((c = line[i++] != '}'))
-						append(&subst, &c, 1);
-					append(&subst, "\0", 1);
-
-					if (!strcmp(subst.chars, "HOME"))
-					{
-						append(&buf, V.home, 169);
-					}
-					else if (!strcmp(subst.chars, "USER"))
-					{
-						append(&buf, V.user, 169);
-					}
-					else if (!strcmp(subst.chars, "SHELL"))
-					{
-						append(&buf, V.shell, 169);
-					}
-					else if (!strcmp(subst.chars, "PWD"))
-					{
-						append(&buf, V.pwd, 169);
-					}
-					else if (!strcmp(subst.chars, "UID"))
-					{
-						char *num = itoa(V.uid);
-						append(&buf, num, 169);
-						free(num);
-					}
-					else if (!strcmp(subst.chars, "PID"))
-					{
-						char *num = itoa(V.pid);
-						append(&buf, num, 169);
-						free(num);
-					}
-
-					free(subst.chars);
-					resetbuf(&subst);
-				}
-				else
-				{
-					append(&buf, "$", 1);
-					append(&buf, &c, 1);
-				}
-				continue;
-			}
-
 			if (quotes1) quotes1++;
 			if (quotes2) quotes2++;
 
@@ -664,7 +697,7 @@ int get_jobs()
 	int tk;
 	int i;
 
-	sp = splitcom(&splitted);
+	sp = splitcom(&splitted, V.history.top);
 
 	for (i = 0; i < sp; i++)
 	{
@@ -702,7 +735,7 @@ int execute(job jb)
 	int prevrd;
 	int filefd;
 
-	for (i = 0; i < 7; i++)
+	for (i = 0; i < 6; i++)
 	{
 		if (!strcmp(jb.programs[0].name, sh_names[i]))
 		{
@@ -759,9 +792,14 @@ int execute(job jb)
 				dup2(filefd, 1);
 				close(filefd);
 			}
-			
-			execvp(jb.programs[iprog].name, jb.programs[iprog].arguments);
-			printf("failed\n");
+
+			if (!strcmp(jb.programs[iprog].name, "history"))
+				sh_history(jb.programs[iprog].arguments);
+			else
+			{
+				execvp(jb.programs[iprog].name, jb.programs[iprog].arguments);
+				printf("failed\n");
+			}
 			_exit(1);
 		}
 
@@ -873,6 +911,12 @@ void stophndlr(int sig)
 	}
 }
 
+void chldhndlr(int sig)
+{
+	sig += 0;
+	//wait();
+}
+
 int main(int argc, char** argv)
 {
 	
@@ -882,6 +926,7 @@ int main(int argc, char** argv)
 
 	signal(SIGINT, inthndlr);
 	signal(SIGTSTP, stophndlr);
+	signal(SIGCHLD, SIG_IGN);
 	
 	while (!V.eof)
 	{
@@ -896,10 +941,12 @@ int main(int argc, char** argv)
 		{
 			
 			jb = takeq(&jobq);
+	
 			execute(jb);
 			freejob(&jb);
 			
 		}
+		resetq(&jobq);
 	}
 
 	onexit();
