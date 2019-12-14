@@ -88,6 +88,16 @@ typedef struct job
 
 void freejob(job *jb);
 
+typedef struct process
+{
+	char *name;
+	pid_t pid;
+	int status; //0 running in bg | 1 completed | 2 stopped
+} process;
+
+
+process bgprocs[MAX];
+
 //QUEUE
 typedef struct QUEUE
 {
@@ -109,7 +119,7 @@ void addq(queue *q, job a)
 		q->num++;
 	}
 	else
-		printf("job can not be run : jobs queue if full\n");
+		printf("Job can not be run : jobs queue if full\n");
 }
 
 job takeq(queue *q)
@@ -159,6 +169,7 @@ struct vars
 	int eof;
 	history history;
 	pid_t curpid;
+	char *curname;
 };
 
 struct vars V;
@@ -189,7 +200,7 @@ void freehistory()
 
 void err_com()
 {
-	printf("invalid input\n");
+	printf("Invalid input\n");
 }
 
 
@@ -231,7 +242,7 @@ int sh_cd(char **args)
 
 	if (chdir(args[1])!= 0) 
 	{
-		printf("no such directory\n");
+		printf("No such directory\n");
 		return -1;
 	}
 
@@ -252,19 +263,97 @@ int sh_pwd(char **args)
 
 int sh_jobs(char **args)
 {
-	printf("%s\n", args[0]);
+	int i;
+
+	if (args[1] != NULL) return -1;
+
+	for (i = 0; i < MAX; i++)
+	{
+		if (bgprocs[i].name != NULL)
+		{
+			printf("[%d]\t", i + 1);
+			if (bgprocs[i].status == 0) printf("Running");
+			else if (bgprocs[i].status == 1) printf("Done");
+			else printf("Stopped");
+			printf("\t\t%s\n", bgprocs[i].name);
+
+			if (bgprocs[i].status == 1)
+			{
+				free(bgprocs[i].name);
+				bgprocs[i].name = NULL;
+			}
+		}
+	}
 	return 0;
 }
 
 int sh_fg(char **args)
 {
-	printf("%s\n", args[0]);
+	int n;
+	int status;
+	pid_t wpid;
+
+	if (args[1] == NULL || args[2] != NULL)
+		return -1;
+
+	n = atoi(args[1]);
+	if (n < 1) 
+	{
+		printf("Illigal argument\n");
+		return -1;
+	}
+
+	if (n > MAX || bgprocs[n - 1].name == NULL || bgprocs[n - 1].status == 1)
+	{
+		printf("No suspended job with this index\n");
+		return -1;
+	}
+
+	V.curpid = bgprocs[n - 1].pid;
+	printf("%s\n", bgprocs[n - 1].name);
+	V.curname = bgprocs[n - 1].name;
+
+	bgprocs[n - 1].name = NULL;
+
+	if (bgprocs[n - 1].status == 2)
+		kill(bgprocs[n - 1].pid, SIGCONT);
+
+	do
+	{
+		wpid = waitpid(bgprocs[n - 1].pid, &status, WUNTRACED);
+	} while (!WIFEXITED(status) && !WIFSIGNALED(status) && !WIFSTOPPED(status));
+
+
+	V.curpid = V.pid;
+
 	return 0;
 }
 
 int sh_bg(char **args)
 {
-	printf("%s\n", args[0]);
+	int n;
+
+	if (args[1] == NULL || args[2] != NULL)
+		return -1;
+
+	n = atoi(args[1]);
+	if (n < 1) 
+	{
+		printf("Illigal argument\n");
+		return -1;
+	}
+
+	if (n > MAX || bgprocs[n - 1].name == NULL || bgprocs[n - 1].status != 2)
+	{
+		printf("No suspended job with this index\n");
+		return -1;
+	}
+
+	bgprocs[n - 1].status = 0;
+	printf("Running %s in background\n", bgprocs[n - 1].name);
+
+	kill(bgprocs[n - 1].pid, SIGCONT);
+	
 	return 0;
 }
 
@@ -364,7 +453,7 @@ int readline()
 			}
 			else if (cmnum > V.history.num || cmnum <= V.history.num - MAX)
 			{
-				printf("can not substitute command : command is out of reach\n");
+				printf("Can not substitute command : command is out of reach\n");
 				return -1;
 			}
 			else
@@ -417,16 +506,22 @@ int splitcom(char ***result, int id)
 
 		i++;
 	}
-	coms = (char**)realloc(coms, sizeof(char*)*(num + 1));
-	if (coms == NULL) return MEM_ERROR;
 
-	endbuf(&buf);
-	coms[num++] = buf.chars;
+	if (buf.len > 0)
+	{
+		coms = (char**)realloc(coms, sizeof(char*)*(num + 1));
+		if (coms == NULL) return MEM_ERROR;
 
-	*result = coms;
+		endbuf(&buf);
+		coms[num++] = buf.chars;
+
+		*result = coms;
+	}
+
 	return num;
 }
 
+//todo error handling
 int parsecom(char *line, char ***tokens)
 {
 	char **args = NULL;
@@ -487,8 +582,7 @@ int parsecom(char *line, char ***tokens)
 		{
 			if (quotes1 && quotes2 && quotes1 > quotes2)
 			{
-				free(buf.chars);
-				printf("invalid input\n");
+				err_com();
 				return -1;
 			}
 			quotes1 = quotes1 ? 0 : 1;
@@ -498,8 +592,7 @@ int parsecom(char *line, char ***tokens)
 		{
 			if (quotes2 && quotes1 && quotes2 > quotes1)
 			{
-				free(buf.chars);
-				printf("invalid input\n");
+				err_com();
 				return -1;
 			}
 			quotes2 = quotes2 ? 0 : 1;
@@ -514,6 +607,7 @@ int parsecom(char *line, char ***tokens)
 			else if (c == 't') c = '\t';
 			else if (c == '\'') c = '\'';
 			else if (c == '\"') c = '\"';
+			else append(&buf, &c, 1);
 		}
 		else if (c == '$' && (quotes2 && (!quotes1 || (quotes2 < quotes1))))
 		{
@@ -699,6 +793,8 @@ int get_jobs()
 
 	sp = splitcom(&splitted, V.history.top);
 
+	if (sp == 0) return 0;
+
 	for (i = 0; i < sp; i++)
 	{
 		tk = parsecom(splitted[i], &tokens);
@@ -735,6 +831,8 @@ int execute(job jb)
 	int prevrd;
 	int filefd;
 
+	buffer curname = NEWBUF;
+
 	for (i = 0; i < 6; i++)
 	{
 		if (!strcmp(jb.programs[0].name, sh_names[i]))
@@ -748,11 +846,15 @@ int execute(job jb)
 		if (jb.number_of_programs > 0 && iprog < jb.number_of_programs - 1)
 			if (pipe(p) == -1) return -1;
 
+		tcsetpgrp(0, getpgrp());
+
 		pid = fork();
 
 		if (pid == -1) return -1;
 		if (pid == 0) 
 		{
+			setpgrp();
+
 			if (iprog > 0)
 			{
 				//input from previous program
@@ -773,7 +875,7 @@ int execute(job jb)
 			{
 				if (access(jb.programs[iprog].input_file, F_OK) == -1)
 				{
-					printf("input_file does not exist\n");
+					printf("Input_file does not exist\n");
 					_exit(1);
 				}
 
@@ -796,9 +898,9 @@ int execute(job jb)
 			if (!strcmp(jb.programs[iprog].name, "history"))
 				sh_history(jb.programs[iprog].arguments);
 			else
-			{
+			{		
 				execvp(jb.programs[iprog].name, jb.programs[iprog].arguments);
-				printf("failed\n");
+				printf("Failed\n");
 			}
 			_exit(1);
 		}
@@ -807,14 +909,44 @@ int execute(job jb)
 		if (iprog > 0) close(prevrd);
 
 		prevrd = p[0];
+
+		if (iprog == 0) append(&curname, jb.programs[iprog].name, 169);
+		else
+		{
+			append(&curname, " | ", 3);
+			append(&curname, jb.programs[iprog].name, 169);
+		}
 	}
 
 	V.curpid = pid;
+	endbuf(&curname);
+	if (V.curname != NULL) free(V.curname);
+	V.curname = curname.chars;
 
-	do
+	if (jb.background == 0)
 	{
-		wpid = waitpid(pid, &status, WUNTRACED);
-	} while (!WIFEXITED(status) && !WIFSIGNALED(status) && !WIFSTOPPED(status));
+		do
+		{
+			wpid = waitpid(pid, &status, WUNTRACED);
+		} while (!WIFEXITED(status) && !WIFSIGNALED(status) && !WIFSTOPPED(status));
+	}
+	else
+	{
+		for (i = 0; i < MAX; i++)
+		{
+			if (bgprocs[i].name == NULL)
+			{
+				bgprocs[i].name = V.curname;
+				bgprocs[i].pid = V.curpid;
+				bgprocs[i].status = 0;
+
+				printf("[%d] %d\n", i + 1, V.curpid);
+				break;
+			}
+		}
+
+		V.curname = NULL;
+	}
 
 	V.curpid = V.pid;
 
@@ -850,6 +982,7 @@ int init(int argc, char **argv)
 	V.pid = getpid();
 	V.uid = getuid();
 	V.curpid = V.pid;
+	V.curname = NULL;
 
 	pwd = getpwuid(V.uid);
 	V.username = pwd->pw_name;
@@ -874,6 +1007,11 @@ int init(int argc, char **argv)
 	V.history.top = -1;
 	V.history.num = 0;
 
+	for (i = 0; i < MAX; i++)
+	{
+		bgprocs[i].name = NULL;
+	}
+
 	resetq(&jobq);
 
 	return 0;
@@ -893,28 +1031,52 @@ void inthndlr(int sig)
 	sig += 0;
 	printf("\n");
 	if (V.curpid != V.pid)
-		kill(V.curpid, SIGTERM);
-	else
 	{
-		onexit();
-		exit(0);
+		kill(V.curpid, SIGTERM);
 	}
 }
 
 void stophndlr(int sig)
 {
 	sig += 0;
+	int i;
+	buffer buf = NEWBUF;
+
 	printf("\n");
 	if (V.curpid != V.pid)
 	{
 		kill(V.curpid, SIGTSTP);
+		for (i = 0; i < MAX; i++)
+		{
+			if (bgprocs[i].name == NULL)
+			{
+				append(&buf, V.curname, 169);
+				endbuf(&buf);
+				bgprocs[i].name = buf.chars;
+				bgprocs[i].pid = V.curpid;
+				bgprocs[i].status = 2;
+				printf("[%d]\tStopped\t\t%s\n", i + 1, V.curname);
+				break;
+			}
+		}
 	}
 }
 
 void chldhndlr(int sig)
 {
 	sig += 0;
-	//wait();
+	int pid;
+	int status;
+	int i;
+
+	while((pid = waitpid(-1, &status, WNOHANG)) > 0)
+	{
+		for (i = 0; i < MAX; i++)
+		{
+			if (bgprocs[i].name != NULL && bgprocs[i].pid == pid) 
+				bgprocs[i].status = 1;
+		}
+	}
 }
 
 int main(int argc, char** argv)
@@ -926,7 +1088,7 @@ int main(int argc, char** argv)
 
 	signal(SIGINT, inthndlr);
 	signal(SIGTSTP, stophndlr);
-	signal(SIGCHLD, SIG_IGN);
+	signal(SIGCHLD, chldhndlr);
 	
 	while (!V.eof)
 	{
