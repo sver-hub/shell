@@ -60,6 +60,7 @@ int endbuf(buffer *buf)
 	tmp[buf->len] = '\0';
 	buf->chars = tmp;
 	buf->mem = buf->len + 1;
+
 	return 0;
 }
 
@@ -289,7 +290,7 @@ int sh_fg(char **args)
 {
 	int n;
 	int status;
-	pid_t wpid;
+	//pid_t wpid;
 
 	if (args[1] == NULL || args[2] != NULL)
 		return -1;
@@ -318,7 +319,8 @@ int sh_fg(char **args)
 
 	do
 	{
-		wpid = waitpid(bgprocs[n - 1].pid, &status, WUNTRACED);
+		//wpid = 
+		waitpid(bgprocs[n - 1].pid, &status, WUNTRACED);
 	} while (!WIFEXITED(status) && !WIFSIGNALED(status) && !WIFSTOPPED(status));
 
 
@@ -739,7 +741,6 @@ int checkfilename(char *line)
 	return 0;
 }
 
-//maybe TODO exit status
 int parse_job(char **tokens, int numtokens)
 {
 	int j;
@@ -804,7 +805,7 @@ int parse_job(char **tokens, int numtokens)
 				break;
 			}
 			progs[iprog].input_file = tokens[j];
-			free(tokens[j]);
+			free(tokens[j - 1]);
 		}
 		else if (!strcmp(tokens[j], ">") || !strcmp(tokens[j], ">>"))
 		{
@@ -816,7 +817,7 @@ int parse_job(char **tokens, int numtokens)
 			}
 			progs[iprog].output_file = tokens[j];
 			progs[iprog].output_type = !strcmp(tokens[j - 1], ">") ? 1 : 2;
-			free(tokens[j]);
+			free(tokens[j - 1]);
 		}
 		else if (!strcmp(tokens[j], "&"))
 		{
@@ -916,7 +917,7 @@ int execute(job jb)
 {
 	int i;
 	int iprog;
-	pid_t wpid;
+	//pid_t wpid;
 	int status;
 	pid_t pid;
 	int p[2];
@@ -994,6 +995,8 @@ int execute(job jb)
 				execvp(jb.programs[iprog].name, jb.programs[iprog].arguments);
 				printf("-shell: %s: command not found\n", jb.programs[iprog].name);
 			}
+			onexit();
+			freejob(&jb);
 			_exit(1);
 		}
 
@@ -1019,7 +1022,8 @@ int execute(job jb)
 	{
 		do
 		{
-			wpid = waitpid(pid, &status, WUNTRACED);
+			//wpid = 
+			waitpid(pid, &status, WUNTRACED);
 		} while (!WIFEXITED(status) && !WIFSIGNALED(status) && !WIFSTOPPED(status));
 	}
 	else
