@@ -652,16 +652,17 @@ int parsecom(char *line, char ***tokens)
 			if (c > '0' && c <= '9')
 			{
 				if (V.numargs >= c - '0')
-				append(&buf, V.args[c - '0' - 1], 169);
+					append(&buf, V.args[c - '0' - 1], 169);
+				else
+				{
+					append(&buf, "$", 1);
+					append(&buf, &c, 1);
+				}
 			}
 			else if (c == '#')
 			{
 				c = V.numargs + '0';
 				append(&buf, &c, 1);
-			}
-			else if (c == '?')
-			{
-
 			}
 			else if (c == '{')
 			{
