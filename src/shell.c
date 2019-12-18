@@ -9,6 +9,7 @@
 #include <pwd.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/wait.h>
 
 #define BUFFADD 20
 #define MEM_ERROR -1
@@ -246,7 +247,6 @@ int sh_cd(char **args)
 
 	free(V.pwd);
 	V.pwd = getcwd(NULL, 1);
-	//realpath(args[0], NULL);
 
 	return 0;
 }
@@ -888,6 +888,8 @@ int get_jobs()
 		if (tk > 0) parse_job(tokens, tk);
 		free(splitted[i]);
 	}
+	
+	free(splitted);
 
 	return 0;
 }
@@ -1107,8 +1109,15 @@ int init(int argc, char **argv)
 
 int onexit()
 {
+	int i;
+
 	free(V.pwd);
 	free(V.shell);
+	for (i = 0; i < V.numargs; i++)
+	{
+		free(V.args[i]);
+	}
+	free(V.args);
 	freehistory();
 	
 	return 0;
@@ -1197,7 +1206,4 @@ int main(int argc, char** argv)
 	}
 
 	onexit();
-	
-
-	
 }
