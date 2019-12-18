@@ -1119,10 +1119,6 @@ int onexit()
 	int i;
 
 	free(V.shell);
-	for (i = 0; i < V.numargs; i++)
-	{
-		free(V.args[i]);
-	}
 	free(V.args);
 	free(V.curname);
 	freehistory();
