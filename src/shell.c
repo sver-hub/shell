@@ -290,7 +290,6 @@ int sh_fg(char **args)
 {
 	int n;
 	int status;
-	//pid_t wpid;
 
 	if (args[1] == NULL || args[2] != NULL)
 		return -1;
@@ -319,7 +318,6 @@ int sh_fg(char **args)
 
 	do
 	{
-		//wpid = 
 		waitpid(bgprocs[n - 1].pid, &status, WUNTRACED);
 	} while (!WIFEXITED(status) && !WIFSIGNALED(status) && !WIFSTOPPED(status));
 
@@ -919,7 +917,6 @@ int execute(job jb)
 {
 	int i;
 	int iprog;
-	//pid_t wpid;
 	int status;
 	pid_t pid;
 	int p[2];
@@ -1024,7 +1021,6 @@ int execute(job jb)
 	{
 		do
 		{
-			//wpid = 
 			waitpid(pid, &status, WUNTRACED);
 		} while (!WIFEXITED(status) && !WIFSIGNALED(status) && !WIFSTOPPED(status));
 	}
@@ -1159,7 +1155,6 @@ void stophndlr(int sig)
 {
 	sig += 0;
 	int i;
-	buffer buf = NEWBUF;
 
 	printf("\n");
 	if (V.curpid != V.pid)
@@ -1169,12 +1164,11 @@ void stophndlr(int sig)
 		{
 			if (bgprocs[i].name == NULL)
 			{
-				append(&buf, V.curname, 169);
-				endbuf(&buf);
-				bgprocs[i].name = buf.chars;
+				bgprocs[i].name = V.curname;
+				V.curname = NULL;
 				bgprocs[i].pid = V.curpid;
 				bgprocs[i].status = 2;
-				printf("[%d]\tStopped\t\t%s\n", i + 1, V.curname);
+				printf("[%d]\tStopped\t\t%s\n", i + 1, bgprocs[i].name);
 				break;
 			}
 		}
