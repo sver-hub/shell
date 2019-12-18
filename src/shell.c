@@ -246,7 +246,6 @@ int sh_cd(char **args)
 		return -1;
 	}
 
-	free(V.pwd);
 	getcwd(V.pwd, 150);
 
 	return 0;
@@ -746,6 +745,7 @@ int parse_job(char **tokens, int numtokens)
 {
 	int j;
 	job jb;
+	jb.background = 0;
 
 	program *progs = NULL;
 	int iprog = 0;
