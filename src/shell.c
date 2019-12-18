@@ -312,6 +312,7 @@ int sh_fg(char **args)
 	printf("%s\n", bgprocs[n - 1].name);
 	V.curname = bgprocs[n - 1].name;
 
+	free(bgprocs[n - 1].name);
 	bgprocs[n - 1].name = NULL;
 
 	if (bgprocs[n - 1].status == 2)
