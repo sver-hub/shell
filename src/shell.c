@@ -312,7 +312,6 @@ int sh_fg(char **args)
 	printf("%s\n", bgprocs[n - 1].name);
 	V.curname = bgprocs[n - 1].name;
 
-	free(bgprocs[n - 1].name);
 	bgprocs[n - 1].name = NULL;
 
 	if (bgprocs[n - 1].status == 2)
@@ -1129,6 +1128,19 @@ int onexit()
 	free(V.args);
 	free(V.curname);
 	freehistory();
+
+	for (i = 0; i < MAX; i++)
+	{
+		if (bgprocs[i].name != NULL)
+		{
+			if (bgprocs[i].status == 0 || bgprocs[i].status == 2)
+			{
+				kill(bgprocs[i].pid, SIGTERM);
+			}
+
+			free(bgprocs[i].name);
+		}
+	}
 	
 	return 0;
 }
