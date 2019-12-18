@@ -1042,7 +1042,7 @@ int execute(job jb)
 				break;
 			}
 		}
-		free(curname.chars);
+	
 		V.curname = NULL;
 	}
 
