@@ -16,6 +16,7 @@
 #define NEWBUF {NULL, 0, 0}
 #define NEWJOB {0, NULL, 0}
 #define MAX 10
+#define EXIT -69
 
 //BUFFER
 typedef struct buffer
@@ -359,10 +360,8 @@ int sh_exit(char **args)
 {
 	if (args[1] != NULL)
 		return -1;
-
-	onexit();
-	exit(0);
-	return 0;
+	
+	return EXIT;
 }
 
 int sh_history(char **args)
@@ -1179,6 +1178,7 @@ int main(int argc, char** argv)
 {
 	
 	job jb;
+	int code = 0;
 
 	init(argc, argv);
 
@@ -1197,9 +1197,13 @@ int main(int argc, char** argv)
 
 			jb = takeq(&jobq);
 	
-			execute(jb);
+			code = execute(jb);
 			freejob(&jb);
-			
+			if (code == EXIT)
+			{
+				V.eof = 1;
+				break;
+			}
 		}
 		resetq(&jobq);
 	}
