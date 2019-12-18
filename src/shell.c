@@ -821,7 +821,7 @@ int parse_job(char **tokens, int numtokens)
 		}
 		else if (!strcmp(tokens[j], "&"))
 		{
-			free(tokens[j]);
+			
 			if (j == numtokens - 1)
 				jb.background = 1;
 			else
@@ -830,6 +830,7 @@ int parse_job(char **tokens, int numtokens)
 				error = 1;
 				break;
 			}
+			free(tokens[j]);
 		}
 		else
 		{
