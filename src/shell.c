@@ -651,6 +651,7 @@ int parsecom(char *line, char ***tokens)
 
 			if (c > '0' && c <= '9')
 			{
+				if (V.numargs >= c - '0')
 				append(&buf, V.args[c - '0' - 1], 169);
 			}
 			else if (c == '#')
