@@ -494,7 +494,6 @@ int readline()
 	return 0;
 }
 
-//todo error handling
 int splitcom(char ***result)
 {
 	int num = 0;
@@ -553,7 +552,6 @@ int splitcom(char ***result)
 	return num;
 }
 
-//todo error handling
 int parsecom(char *line, char ***tokens)
 {
 	char **args = NULL;
@@ -582,9 +580,10 @@ int parsecom(char *line, char ***tokens)
 
 				if (++numargs > memargs)
 				{
-					args = (char**)realloc(args, sizeof(char*)*(memargs + BUFFADD));
-					if (args == NULL) return MEM_ERROR;
 					memargs += BUFFADD;
+					args = (char**)realloc(args, sizeof(char*)*memargs);
+					if (args == NULL) return MEM_ERROR;
+					
 				}
 
 				args[numargs - 1] = buf.chars;
@@ -889,6 +888,7 @@ int get_jobs()
 	}
 
 	free(splitted);
+	free(tokens);
 
 	return 0;
 }
@@ -1116,6 +1116,7 @@ int onexit()
 		free(V.args[i]);
 	}
 	free(V.args);
+	free(V.curname);
 	freehistory();
 	
 	return 0;
