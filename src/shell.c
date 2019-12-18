@@ -890,10 +890,11 @@ int get_jobs()
 		tk = parsecom(splitted[i], &tokens);
 		if (tk > 0) parse_job(tokens, tk);
 		free(splitted[i]);
+		free(tokens);
 	}
 
 	free(splitted);
-	free(tokens);
+	
 
 	return 0;
 }
