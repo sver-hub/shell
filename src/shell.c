@@ -793,6 +793,7 @@ int parse_job(char **tokens, int numtokens)
 			args = NULL;
 			iarg = 0;
 			memarg = 0;
+			free(tokens[j]);
 		}
 		else if (!strcmp(tokens[j], "<"))
 		{
@@ -803,6 +804,7 @@ int parse_job(char **tokens, int numtokens)
 				break;
 			}
 			progs[iprog].input_file = tokens[j];
+			free(tokens[j]);
 		}
 		else if (!strcmp(tokens[j], ">") || !strcmp(tokens[j], ">>"))
 		{
@@ -814,9 +816,11 @@ int parse_job(char **tokens, int numtokens)
 			}
 			progs[iprog].output_file = tokens[j];
 			progs[iprog].output_type = !strcmp(tokens[j - 1], ">") ? 1 : 2;
+			free(tokens[j]);
 		}
 		else if (!strcmp(tokens[j], "&"))
 		{
+			free(tokens[j]);
 			if (j == numtokens - 1)
 				jb.background = 1;
 			else
