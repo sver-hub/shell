@@ -162,7 +162,7 @@ struct vars
 	int numargs;
 	char **args;
 	uid_t uid;
-	char *pwd;
+	char pwd[150];
 	pid_t pid;
 	char *username;
 	int eof;
@@ -246,7 +246,7 @@ int sh_cd(char **args)
 	}
 
 	free(V.pwd);
-	V.pwd = getcwd(NULL, 1);
+	getcwd(V.pwd, 150);
 
 	return 0;
 }
@@ -888,7 +888,7 @@ int get_jobs()
 		if (tk > 0) parse_job(tokens, tk);
 		free(splitted[i]);
 	}
-	
+
 	free(splitted);
 
 	return 0;
@@ -1068,7 +1068,7 @@ int init(int argc, char **argv)
 
 	V.user = getenv("USER");
 	V.home = getenv("HOME");
-	V.pwd = getcwd(NULL, 1);
+	getcwd(V.pwd, 150);
 	V.pid = getpid();
 	V.uid = getuid();
 	V.curpid = V.pid;
@@ -1111,7 +1111,6 @@ int onexit()
 {
 	int i;
 
-	free(V.pwd);
 	free(V.shell);
 	for (i = 0; i < V.numargs; i++)
 	{
